@@ -1,1 +1,46 @@
+from langchain_community.embeddings import FakeEmbeddings
+from langchain_community.vectorstores import FAISS
+
+
+with open("text.txt", "r", encoding="utf-8") as f:
+    text = f.read()
+
+
+def fixed_chunk(text, chunk_size=300):
+    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+
+
+def sliding_window_chunk(text, chunk_size=300, overlap=100):
+    step = chunk_size - overlap
+    return [text[i:i+chunk_size] for i in range(0, len(text), step)]
+
+fixed_chunks = fixed_chunk(text)
+sliding_chunks = sliding_window_chunk(text)
+
+
+embedding = FakeEmbeddings(size=384)
+fixed_db = FAISS.from_texts(fixed_chunks, embedding)
+sliding_db = FAISS.from_texts(sliding_chunks, embedding)
+
+print("VDB 建立完成")
+print("固定切塊數量：", len(fixed_chunks))
+print("滑動視窗數量：", len(sliding_chunks))
+
+
+query = "Graph RAG 如何解決傳統 RAG 的問題？"
+print("\n=== 固定切塊查詢結果 ===")
+for d in fixed_db.similarity_search(query, k=2):
+    print(d.page_content[:120])
+
+print("\n=== 滑動視窗查詢結果 ===")
+for d in sliding_db.similarity_search(query, k=2):
+    print(d.page_content[:120])
+
+with open("table/compare.txt", "r", encoding="utf-8") as f:
+    table_text = f.read()
+table_db = FAISS.from_texts([table_text], embedding)
+
+print("\n=== 表格查詢結果 ===")
+for d in table_db.similarity_search("Graph RAG 的優勢", k=1):
+    print(d.page_content)
 
