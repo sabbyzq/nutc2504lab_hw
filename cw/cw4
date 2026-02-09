@@ -1,0 +1,166 @@
+import os
+import uuid
+import csv
+import requests
+from openai import OpenAI
+from qdrant_client import QdrantClient, models
+
+EMBED_API_URL = "http://ws-04.wade0426.me/embed"
+
+llm_client = OpenAI(
+    base_url="https://ws-02.wade0426.me/v1",
+    api_key=""
+)
+
+qdrant = QdrantClient(
+    url="http://localhost:6333"
+)
+
+with open("text.txt", "r", encoding="utf-8") as f:
+    system_prompt = f.read()
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CW_DIR = os.path.join(BASE_DIR, "day6", "CW")  # 修改路徑到正確資料夾
+
+def get_embeddings(texts: list[str], task_description="檢索技術文件") -> list[list[float]]:
+    response = requests.post(
+        EMBED_API_URL,
+        json={"texts": texts, "task_description": task_description, "normalize": True},
+        timeout=60
+    )
+    response.raise_for_status()
+    return response.json()["embeddings"]
+
+
+def load_and_chunk_txt(folder=CW_DIR, chunk_size=300, overlap=50):
+    if not os.path.exists(folder):
+        raise FileNotFoundError(f"資料夾不存在: {folder} ({os.path.abspath(folder)})")
+    chunks = []
+    for file in os.listdir(folder):
+        if file.endswith(".txt"):
+            with open(os.path.join(folder, file), "r", encoding="utf-8") as f:
+                text = f.read()
+            start = 0
+            while start < len(text):
+                chunk = text[start:start + chunk_size]
+                chunks.append(chunk)
+                start += chunk_size - overlap
+    return chunks
+
+collection_name = "day6_cw_rag_hybrid"
+
+if qdrant.collection_exists(collection_name):
+    qdrant.delete_collection(collection_name)
+
+vector_size = len(get_embeddings(["test"])[0])
+qdrant.create_collection(
+    collection_name=collection_name,
+    vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE)
+)
+
+documents = load_and_chunk_txt(CW_DIR)
+print(f"切出 {len(documents)} 個文字塊")
+
+doc_embeddings = get_embeddings(documents)
+points = [
+    models.PointStruct(
+        id=str(uuid.uuid4()),
+        vector=emb,
+        payload={"text": text}
+    )
+    for text, emb in zip(documents, doc_embeddings)
+]
+
+qdrant.upsert(collection_name=collection_name, points=points)
+print(f"已寫入 Qdrant：{len(points)} chunks")
+
+
+def query_rewrite(question: str) -> str:
+    res = llm_client.chat.completions.create(
+        model="gemma-3-27b-it",
+        messages=[
+            {"role": "system", "content": "請將問題改寫成適合文件檢索的查詢"},
+            {"role": "user", "content": question}
+        ]
+    )
+    return res.choices[0].message.content.strip()
+
+
+def hybrid_retrieve(query: str, top_k=5):
+  
+    query_emb = get_embeddings([query])[0]
+    vector_hits = qdrant.search(collection_name=collection_name, query_vector=query_emb, limit=top_k*2)
+
+
+    keyword_hits = []
+    for p in points:
+        if query.lower() in p.payload["text"].lower():
+            keyword_hits.append(p)
+    keyword_hits = keyword_hits[:top_k*2]
+
+    merged = {p.id: p for p in vector_hits + keyword_hits}.values()
+
+    scored = []
+    for p in merged:
+        prompt = f"問題: {query}\n資料: {p.payload['text']}\n請評估這段資料對回答問題的相關性，1~10分:"
+        score_res = llm_client.chat.completions.create(
+            model="gemma-3-27b-it",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        score_text = score_res.choices[0].message.content.strip()
+        try:
+            score = float(score_text)
+        except:
+            score = 1.0
+        scored.append((p.payload["text"], score))
+
+ 
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    
+    return [text for text, _ in scored[:top_k]]
+
+def rag_answer(question: str, contexts: list[str]) -> str:
+    context_text = "\n".join(contexts)
+    res = llm_client.chat.completions.create(
+        model="gemma-3-27b-it",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"資料：\n{context_text}\n\n問題：{question}"}
+        ]
+    )
+    return res.choices[0].message.content.strip()
+
+
+questions_file = os.path.join(BASE_DIR, "questions.csv")
+rows = []
+
+with open(questions_file, "r", encoding="utf-8-sig") as f:
+    reader = csv.DictReader(f)
+    questions = [row["q_id"] for row in reader]  
+
+for q in questions:
+    rewritten = query_rewrite(q)
+    docs = hybrid_retrieve(rewritten)
+    answer = rag_answer(q, docs)
+
+    print("User:", q)
+    print("Rewrite:", rewritten)
+    print("Top Docs:", docs)
+    print("Assistant:", answer)
+    print("-" * 50)
+
+    rows.append({
+        "question": q,
+        "rewritten_query": rewritten,
+        "answer": answer
+    })
+
+
+out_csv = os.path.join(BASE_DIR, "Re_Write_questions.csv")
+with open(out_csv, "w", newline="", encoding="utf-8-sig") as f:
+    writer = csv.DictWriter(f, fieldnames=["question", "rewritten_query", "answer"])
+    writer.writeheader()
+    writer.writerows(rows)
+
+print("Re_Write_questions.csv 產生完成")
