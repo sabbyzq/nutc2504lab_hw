@@ -1,0 +1,11 @@
+固定大小切塊
+FIXED_CHUNK_SIZE = 300
+滑動視窗切塊
+SLIDING_CHUNK_SIZE = 300
+SLIDING_OVERLAP = 100
+語句切塊
+chunk 長度不固定。
+
+ 哪種方法效果最好（平均分數最高）？
+滑動視窗切 
+
