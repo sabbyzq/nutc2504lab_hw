@@ -1,0 +1,26 @@
+系統架構
+
+Query Rewrite（提升多輪理解）
+
+Hybrid Search（BM25 + Embedding）
+
+Rerank（Embedding cosine similarity）
+
+LLM 僅根據 context 作答（防 hallucination）
+
+ DeepEval 指標用途
+| 指標                   | 用途             |
+| -------------------- | -------------- |
+| Faithfulness         | 是否亂編           |
+| Answer Relevancy     | 答案是否對題         |
+| Contextual Recall    | 有沒有抓到該抓的資料     |
+| Contextual Precision | 有沒有抓太多垃圾       |
+| Contextual Relevancy | context 是否真的有用 |
+優化策略
+Rewrite 減少模糊查詢
+
+Hybrid Search 提升 Recall
+
+Rerank 提升 Precision
+
+DeepEval 作為 RAG tuning 依據
