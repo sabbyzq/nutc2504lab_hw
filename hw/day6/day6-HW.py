@@ -1,21 +1,19 @@
 import os
 import pandas as pd
-from sentence_transformers import SentenceTransformer, util
+import requests
 from rank_bm25 import BM25Okapi
 from deepeval.metrics import (
     FaithfulnessMetric,
-    AnswerRelevancyMetric,
-    ContextualRecallMetric,
-    ContextualPrecisionMetric,
-    ContextualRelevancyMetric
+    AnswerRelevancyMetric
 )
 from deepeval.test_case import LLMTestCase
 from openai import OpenAI
 
+client = OpenAI(
+    base_url="https://ws-02.wade0426.me/v1",
+    api_key=""
+)
 
-API_URL = "https://ws-04.wade0426.me/embed"
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 embedder = SentenceTransformer("intfloat/multilingual-e5-base")
 
 
@@ -49,6 +47,14 @@ def hybrid_search(query, top_k=5):
 
     return list(set(bm25_top + emb_top))
 
+def get_embedding(text: str) -> list:
+    response = requests.post(
+        "http://ws-04.wade0426.me/embed",
+        json={"texts": [text]}
+    )
+    return response.json()["embeddings"][0]
+
+
 def rerank(query, doc_ids):
     scored = []
     for i in doc_ids:
@@ -79,9 +85,6 @@ def answer_llm(context, question):
 metrics = [
     FaithfulnessMetric(),
     AnswerRelevancyMetric(),
-    ContextualRecallMetric(),
-    ContextualPrecisionMetric(),
-    ContextualRelevancyMetric()
 ]
 
 questions = pd.read_csv("questions.csv")
@@ -132,4 +135,3 @@ df = pd.DataFrame(rows, columns=[
 
 df.to_csv("day6_HW_questions.csv", index=False, encoding="utf-8-sig")
 print(" Day6 作業完成")
-
