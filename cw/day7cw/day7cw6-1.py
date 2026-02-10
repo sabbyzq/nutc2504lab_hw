@@ -88,7 +88,7 @@ def main():
         convert_pdf_to_markdown(
             input_pdf_path=input_pdf,
             output_md_path=output_markdown,
-            vllm_hostname="localhost:8000/v1",
+            vllm_hostname="https://ws-01.wade0426.me/v1/chat/completions",
             model_name='allenai/olmOCR-2-7B-1025-FP8',
         )
     except Exception as e:
