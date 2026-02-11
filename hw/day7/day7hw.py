@@ -17,17 +17,16 @@ from deepeval.metrics import (
 vllm_hostname="ws-01.wade0426.me:443"
 client = OpenAI(
     base_url="https://ws-02.wade0426.me/v1",
-    api_key=""
+    api_key="" 
 )
 
 PDF_FILES = ["1.pdf", "2.pdf", "3.pdf"]
 IMG_FILES = ["4.png"]
 DOCX_FILES = ["5.docx"]
 
-QUESTIONS_CSV = "questions.csv"        
-GROUND_TRUTH_CSV = "questions_answer.csv" 
+QUESTIONS_CSV = "questions.csv"
+GROUND_TRUTH_CSV = "questions_answer.csv"
 OUTPUT_CSV = "test_dataset.csv"
-
 
 SUSPICIOUS_PATTERNS = [
     "ignore previous instructions",
@@ -62,7 +61,30 @@ def extract_text_from_docx(docx_path):
 
 
 def llm(prompt: str) -> str:
-    return "這是一個示例回答（請換成真實 LLM 回傳）"
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "你是一個知識型助理，請根據提供的文件用繁體中文回答問題。"},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0
+    )
+    return response.choices[0].message.content
+
+
+def split_text_into_chunks(text, chunk_size=500):
+    """將文字切成小段落，每段 chunk_size 字元"""
+    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+
+
+def retrieve_top_k_chunks(question, chunks, k=3):
+    """簡單文字相似度檢索前 k 個 chunk"""
+    scores = []
+    for chunk in chunks:
+        score = sum(question.lower().count(word) for word in chunk["text"].lower().split())
+        scores.append(score)
+    top_chunks = [chunks[i] for i in sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]]
+    return top_chunks
 
 
 def rag_answer(question, retrieved_docs):
@@ -74,7 +96,7 @@ def rag_answer(question, retrieved_docs):
     問題：{question}
     """
     answer = llm(prompt)
-    source = retrieved_docs[0]["source"]
+    source = ", ".join(set(d["source"] for d in retrieved_docs))
     return answer, source
 
 
@@ -104,7 +126,6 @@ def evaluate_with_deepeval(question, answer, ground_truth, contexts):
         print(metric.__class__.__name__, ":", metric.score)
 
 
-
 def save_to_csv(filename, rows):
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["id", "questions", "answer", "source"])
@@ -112,12 +133,11 @@ def save_to_csv(filename, rows):
         for row in rows:
             writer.writerow(row)
 
-
 if __name__ == "__main__":
-
     documents = {}
     injection_results = {}
 
+    
     for pdf in PDF_FILES:
         text = extract_text_from_pdf(pdf)
         documents[pdf] = text
@@ -138,20 +158,23 @@ if __name__ == "__main__":
         print(f"{name}: {'含有惡意提示詞' if is_injection else '安全'}")
 
 
-
-
+    all_chunks = []
+    for source, text in documents.items():
+        chunks = split_text_into_chunks(text, chunk_size=500)
+        for chunk in chunks:
+            all_chunks.append({"text": chunk, "source": source})
+            
     questions_df = pd.read_csv(QUESTIONS_CSV)
     ground_truth_df = pd.read_csv(GROUND_TRUTH_CSV)
 
     csv_rows = []
 
-
     for idx, row in questions_df.iterrows():
         id = row['id']
         question = row['questions']
 
-  
-        retrieved_docs = [{"text": t, "source": s} for s, t in documents.items()]
+      
+        retrieved_docs = retrieve_top_k_chunks(question, all_chunks, k=3)
 
         answer, source = rag_answer(question, retrieved_docs)
         gt_answer_row = ground_truth_df.loc[ground_truth_df["id"].astype(str) == str(id), "answer"]
@@ -163,14 +186,12 @@ if __name__ == "__main__":
         contexts = [d["text"] for d in retrieved_docs]
         evaluate_with_deepeval(question, answer, gt_answer, contexts)
 
-  
         csv_rows.append({
             "id": id,
             "questions": question,
             "answer": answer,
             "source": source
         })
-
 
     save_to_csv(OUTPUT_CSV, csv_rows)
     print(f"\n已產生 CSV: {OUTPUT_CSV}")
