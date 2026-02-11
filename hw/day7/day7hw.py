@@ -5,6 +5,7 @@ from PIL import Image
 import pytesseract
 from docx import Document
 import pandas as pd
+from openai import OpenAI
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import (
     AnswerRelevancyMetric,
@@ -14,8 +15,10 @@ from deepeval.metrics import (
 )
 
 vllm_hostname="ws-01.wade0426.me:443"
-model_name=""
-api_key=""
+client = OpenAI(
+    base_url="https://ws-02.wade0426.me/v1",
+    api_key=""
+)
 
 PDF_FILES = ["1.pdf", "2.pdf", "3.pdf"]
 IMG_FILES = ["4.png"]
@@ -76,6 +79,11 @@ def rag_answer(question, retrieved_docs):
 
 
 def evaluate_with_deepeval(question, answer, ground_truth, contexts):
+    if not os.getenv("OPENAI_API_KEY"):
+        print("\n=== Deepeval 略過 ===")
+        print("未設定 OPENAI_API_KEY，僅展示 Prompt Injection 與 RAG 結果")
+        return
+
     test_case = LLMTestCase(
         input=question,
         actual_output=answer,
@@ -94,6 +102,7 @@ def evaluate_with_deepeval(question, answer, ground_truth, contexts):
     for metric in metrics:
         metric.measure(test_case)
         print(metric.__class__.__name__, ":", metric.score)
+
 
 
 def save_to_csv(filename, rows):
@@ -165,4 +174,3 @@ if __name__ == "__main__":
 
     save_to_csv(OUTPUT_CSV, csv_rows)
     print(f"\n已產生 CSV: {OUTPUT_CSV}")
-
